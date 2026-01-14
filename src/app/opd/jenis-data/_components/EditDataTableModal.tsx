@@ -8,29 +8,31 @@ import {
   useFieldArray,
 } from "react-hook-form";
 import { useBrandingContext } from "@/src/providers/BrandingProvider";
+import { getCookie } from "@/src/lib/cookie"; // Import helper cookie
+
+// ===== Types =====
+interface ModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  onSuccess: () => void | Promise<void>;
+  dataItem: DataKinerja | null;
+  jenisDataId?: string | null;
+}
 
 interface DataKinerja {
   id: number;
   jenis_data_id: number;
+  kode_opd?: string; // Tambahkan ini agar TS tau ada field ini
   nama_data: string;
   rumus_perhitungan: string;
   sumber_data: string;
   instansi_produsen_data: string;
   keterangan: string;
   target: {
-    tahun: string;
+    tahun: string | number;
     satuan: string;
-    target: string;
+    target: string | number;
   }[];
-}
-
-interface ModalProps {
-  isOpen: boolean;
-  onClose: () => void;
-  onSuccess: () => void | Promise<void>;
-  dataItem: DataKinerja | null;
-  // authToken dihapus
-  jenisDataId?: string | null;
 }
 
 type TargetRow = {
@@ -47,6 +49,15 @@ interface FormValue {
   keterangan: string;
   targets: TargetRow[];
 }
+
+const safeParseOption = (v: string | null | undefined) => {
+    if (!v) return null;
+    try {
+      return JSON.parse(v);
+    } catch {
+      return null;
+    }
+};
 
 const EditDataTableModal = ({
   isOpen,
@@ -78,6 +89,7 @@ const EditDataTableModal = ({
     name: "targets",
   });
 
+  // Reset form saat modal dibuka
   useEffect(() => {
     if (isOpen && dataItem) {
       reset({
@@ -88,24 +100,43 @@ const EditDataTableModal = ({
         keterangan: dataItem.keterangan || "",
         targets:
           dataItem.target?.map((t) => ({
-            tahun: t.tahun,
+            tahun: String(t.tahun),
             satuan: t.satuan,
-            target: t.target,
+            target: String(t.target),
           })) || [],
       });
     }
   }, [isOpen, dataItem, reset]);
 
   const onSubmit: SubmitHandler<FormValue> = async (data) => {
+    if (!branding?.api_perencanaan) {
+        alert("Konfigurasi API belum siap.");
+        return;
+    }
+
     if (!dataItem) {
       alert("Data tidak ditemukan.");
       return;
     }
 
+    // Ambil Kode OPD: Prioritas dari dataItem, fallback ke cookie
+    let kodeOpdToSend = dataItem.kode_opd;
+    if (!kodeOpdToSend) {
+        const dinasCookie = safeParseOption(getCookie("selectedDinas"));
+        kodeOpdToSend = dinasCookie?.value;
+    }
+
+    if (!kodeOpdToSend) {
+        alert("Gagal mengidentifikasi Kode OPD. Silakan refresh halaman.");
+        return;
+    }
+
     setIsSubmitting(true);
 
     const payload = {
+      id: dataItem.id, 
       jenis_data_id: dataItem.jenis_data_id,
+      kode_opd: kodeOpdToSend, // <--- FIELD WAJIB DITAMBAHKAN
       nama_data: data.nama_data,
       rumus_perhitungan: data.rumus_perhitungan,
       sumber_data: data.sumber_data,
@@ -119,21 +150,30 @@ const EditDataTableModal = ({
     };
 
     try {
-      const res = await fetch(
-        `${branding.api_perencanaan}/api/v1/datakinerjaopd/${dataItem.id}`,
-        {
-          method: "PUT",
-          headers: {
-            "Content-Type": "application/json",
-            // Authorization / Token dihapus
-          },
-          body: JSON.stringify(payload),
-        }
-      );
+      // URL: Endpoint OPD (/datakinerjaopd/{id})
+      const url = `${branding.api_perencanaan}/api/v1/datakinerjaopd/${dataItem.id}`;
+      
+      const res = await fetch(url, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+      });
 
       if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.message || "Gagal update data");
+        const errText = await res.text();
+        let errorMsg = `HTTP ${res.status}`;
+        try {
+            const errJson = JSON.parse(errText);
+            if (errJson.message) errorMsg = errJson.message;
+            // Tampilkan detail error validasi jika ada
+            if (errJson.data && typeof errJson.data === 'object') {
+               errorMsg += ": " + JSON.stringify(errJson.data);
+            }
+        } catch {}
+        
+        throw new Error(errorMsg);
       }
 
       alert("Data berhasil diperbarui!");
@@ -155,13 +195,13 @@ const EditDataTableModal = ({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 flex justify-center items-center z-50 p-4 bg-black/50">
+    <div className="fixed inset-0 flex justify-center items-center z-50 p-4" style={{ backgroundColor: "rgba(0, 0, 0, 0.5)" }}>
       <div
         className="bg-white rounded-lg shadow-xl w-full max-w-4xl max-h-[90vh] overflow-y-auto"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="p-5 border-b">
-          <h3 className="text-xl font-bold text-center">EDIT DATA KINERJA</h3>
+          <h3 className="text-xl font-bold text-center text-gray-800">EDIT DATA KINERJA (OPD)</h3>
         </div>
 
         <form onSubmit={handleSubmit(onSubmit)} className="p-8 space-y-4">
@@ -192,7 +232,7 @@ const EditDataTableModal = ({
           />
 
           <div>
-            <label className="block text-sm font-bold mb-2">
+            <label className="block text-sm font-bold mb-2 text-gray-700">
               Jumlah per Tahun
             </label>
             <div className="border rounded overflow-x-auto">
@@ -209,7 +249,7 @@ const EditDataTableModal = ({
                     <tr key={row.id}>
                       <td className="border p-2 text-center">
                         <input
-                          className="w-full bg-gray-100 p-2 rounded text-center cursor-not-allowed"
+                          className="w-full bg-gray-100 p-2 rounded text-center cursor-not-allowed border-none focus:ring-0"
                           value={row.tahun}
                           readOnly
                         />
@@ -261,14 +301,14 @@ const EditDataTableModal = ({
             <button
               type="submit"
               disabled={isSubmitting}
-              className="w-full py-3 rounded text-white font-bold bg-green-600 hover:bg-green-700 disabled:opacity-50 transition-colors"
+              className="w-full py-3 rounded-lg text-white font-bold bg-green-600 hover:bg-green-700 disabled:opacity-50 transition-colors"
             >
               {isSubmitting ? "Menyimpan..." : "Simpan Perubahan"}
             </button>
             <button
               type="button"
               onClick={handleClose}
-              className="w-full py-3 rounded text-white font-bold bg-red-500 hover:bg-red-600 transition-colors"
+              className="w-full py-3 rounded-lg text-white font-bold bg-red-500 hover:bg-red-600 transition-colors"
             >
               Batal
             </button>
@@ -281,7 +321,7 @@ const EditDataTableModal = ({
 
 const InputField = ({ control, name, label, error, isTextarea = false }: any) => (
   <div>
-    <label className="block text-sm font-bold mb-2">{label}</label>
+    <label className="block text-sm font-bold mb-2 text-gray-700">{label}</label>
     <Controller
       name={name}
       control={control}
@@ -291,7 +331,7 @@ const InputField = ({ control, name, label, error, isTextarea = false }: any) =>
           <textarea
             {...field}
             value={field.value || ""}
-            className={`w-full p-3 border rounded focus:ring-2 focus:ring-blue-500 outline-none transition-shadow ${
+            className={`w-full p-3 border rounded-md focus:ring-2 focus:ring-blue-500 outline-none transition-shadow ${
               error ? "border-red-500" : "border-gray-300"
             }`}
           />
@@ -299,7 +339,7 @@ const InputField = ({ control, name, label, error, isTextarea = false }: any) =>
           <input
             {...field}
             value={field.value || ""}
-            className={`w-full p-3 border rounded focus:ring-2 focus:ring-blue-500 outline-none transition-shadow ${
+            className={`w-full p-3 border rounded-md focus:ring-2 focus:ring-blue-500 outline-none transition-shadow ${
               error ? "border-red-500" : "border-gray-300"
             }`}
           />

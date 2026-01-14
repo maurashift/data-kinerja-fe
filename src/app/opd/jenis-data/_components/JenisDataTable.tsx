@@ -6,7 +6,7 @@ import { ChevronDown, Trash2 } from "lucide-react";
 import AddDataTableModal from "./AddDataTableModal";
 import EditDataTableModal from "./EditDataTableModal";
 import { getCookie } from "@/src/lib/cookie"; 
-import { useBrandingContext } from "@/src/providers/BrandingProvider"; 
+import { useBrandingContext } from "@/src/providers/BrandingProvider";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 
@@ -35,34 +35,6 @@ type JenisDataTableProps = {
   dataKinerjaMap: Record<number, DataKinerjaItem[]>;
   onReloadAction: () => void;
   kodeOpd: string | null;
-};
-
-// ===== Helpers =====
-const handleSavePDF = () => {
-  const doc = new jsPDF("l", "mm", "a4");
-
-  doc.setFontSize(14);
-  doc.text("Data Kinerja Pemda – Jenis Kelompok Data", 14, 15);
-
-  autoTable(doc, {
-    html: "#table-jenis-data",
-    startY: 20,
-    theme: "grid",
-    headStyles: {
-      fillColor: [16, 185, 129],
-      textColor: 255,
-      halign: "center",
-    },
-    bodyStyles: {
-      halign: "center",
-    },
-    styles: {
-      fontSize: 9,
-      cellPadding: 3,
-    },
-  });
-
-  doc.save("data-kinerja-pemda.pdf");
 };
 
 const safeParseOption = (
@@ -94,19 +66,12 @@ export default function JenisDataTable({
   const pathname = usePathname();
   const [openId, setOpenId] = useState<number | null>(null);
 
-  // modal TAMBAH
+  // modal & content states
   const [openAddModal, setOpenAddModal] = useState(false);
   const [selectedJenisId, setSelectedJenisId] = useState<string | null>(null);
-
-  // modal EDIT
   const [openEditModal, setOpenEditModal] = useState(false);
-  const [selectedEditItem, setSelectedEditItem] =
-    useState<DataKinerjaItem | null>(null);
-  const [selectedJenisIdForEdit, setSelectedJenisIdForEdit] = useState<
-    number | null
-  >(null);
-
-  // modal KETERANGAN/NARASI
+  const [selectedEditItem, setSelectedEditItem] = useState<DataKinerjaItem | null>(null);
+  const [selectedJenisIdForEdit, setSelectedJenisIdForEdit] = useState<number | null>(null);
   const [openKetModal, setOpenKetModal] = useState(false);
   const [ketContent, setKetContent] = useState<string>("");
 
@@ -150,6 +115,93 @@ export default function JenisDataTable({
     return [];
   }, [checked, mode, periodeLabel, selectedYear]);
 
+  // ===== PDF GENERATOR CUSTOM =====
+  const handleSavePDF = (currentJenisId: number, currentJenisName: string) => {
+    const doc = new jsPDF("l", "mm", "a4");
+    
+    // Header Dokumen
+    doc.setFontSize(14);
+    doc.text(`Data Kinerja OPD - ${currentJenisName}`, 14, 15);
+    doc.setFontSize(10);
+    doc.text(`Periode/Tahun: ${mode === 'tahun' ? selectedYear : periodeLabel}`, 14, 22);
+
+    // Persiapkan Header Tabel
+    const tableHeaders = [
+      "No",
+      "Nama Data",
+      "Definisi Operasional",
+      "Sumber Data",
+      "Instansi Produsen",
+      ...years, // Kolom tahun dinamis
+      "Satuan",
+      "Keterangan" // Ganti 'Aksi' dengan 'Keterangan'
+    ];
+
+    // Persiapkan Body Tabel
+    const rowsData = dataKinerjaMap[currentJenisId] ?? [];
+    
+    // Filter rows (opsional: sama seperti tampilan web)
+    const visibleRows = years.length === 0 ? rowsData : rowsData.filter((row) => {
+        if (!row.target || row.target.length === 0) return false;
+        return row.target.some((t) => {
+            const yearStr = String(t.tahun);
+            return years.includes(yearStr) && t.target !== null && t.target !== undefined;
+        });
+    });
+
+    const tableBody = visibleRows.map((row, index) => {
+      // Mapping target tahunan
+      const tahunMap: Record<string, string> = {};
+      row.target?.forEach((t) => {
+        if (t?.tahun) tahunMap[String(t.tahun)] = String(t.target);
+      });
+
+      // Ambil satuan
+      const satuan = row.target?.[0]?.satuan ?? "-";
+
+      // Array baris
+      return [
+        index + 1,
+        row.nama_data,
+        row.rumus_perhitungan,
+        row.sumber_data,
+        row.instansi_produsen_data,
+        ...years.map(y => tahunMap[y] ?? "-"), // Data tahun
+        satuan,
+        row.keterangan || "-" // Isi keterangan langsung
+      ];
+    });
+
+    autoTable(doc, {
+      head: [tableHeaders],
+      body: tableBody,
+      startY: 28,
+      theme: "grid",
+      styles: {
+        fontSize: 8,
+        cellPadding: 2,
+        valign: "middle",
+        halign: "center",
+        lineWidth: 0.1, // Lebar garis border
+        lineColor: [200, 200, 200] // Warna garis abu-abu
+      },
+      headStyles: {
+        fillColor: [16, 185, 129], // Hijau
+        textColor: 255, // Putih
+        lineWidth: 0.1,
+        lineColor: [255, 255, 255] // Garis pemisah header putih
+      },
+      columnStyles: {
+        1: { halign: "left" }, // Nama Data rata kiri
+        2: { halign: "left" }, // Definisi rata kiri
+        // Kolom keterangan (index terakhir) rata kiri & wrap text
+        [tableHeaders.length - 1]: { halign: "left", cellWidth: 30 } 
+      }
+    });
+
+    doc.save(`data-kinerja-${currentJenisName}.pdf`);
+  };
+
   const toggleOpen = (id: number) => {
     if (openId === id) {
       setOpenId(null);
@@ -158,102 +210,41 @@ export default function JenisDataTable({
     setOpenId(id);
   };
 
-  // --- DELETE 1: Data Kinerja (Baris Tabel) ---
   const handleDeleteKinerja = async (rowId: number, _jenisId: number) => {
-    console.group("🚀 DEBUG: Delete Kinerja");
-    console.log("ID Data Kinerja:", rowId);
-    
-    if (!confirm("Yakin ingin menghapus data ini?")) {
-        console.groupEnd();
-        return;
-    }
-
-    const base = branding?.api_url; // Pastikan menggunakan api_url
-    if (!base) {
-      alert("Base URL api_url belum diset di BrandingContext.");
-      console.groupEnd();
-      return;
-    }
+    if (!confirm("Yakin ingin menghapus data ini?")) return;
+    const base = branding?.api_perencanaan;
+    if (!base) return;
 
     try {
-      const headers: HeadersInit = { accept: "application/json" };
-      
-      // SESUAI REQUEST: TANPA /alur-kerja
-      const url = `${base}/api/v1/datakinerjaopd/${rowId}`;
-      console.log("🔗 DELETE ROW URL:", url);
-
-      const res = await fetch(url, { method: "DELETE", headers });
-
-      if (!res.ok) {
-        const raw = await res.text();
-        console.error("❌ Delete failed:", res.status, raw);
-        alert(`❌ Gagal menghapus data (HTTP ${res.status})`);
-        console.groupEnd();
-        return;
-      }
-
+      const res = await fetch(`${base}/api/v1/datakinerjaopd/${rowId}`, {
+        method: "DELETE",
+        headers: { accept: "application/json" },
+      });
+      if (!res.ok) throw new Error("Gagal menghapus data");
       alert("✅ Data berhasil dihapus!");
       await onReloadAction();
     } catch (error) {
-      console.error("❌ Catch Error:", error);
       alert("❌ Terjadi kesalahan saat menghapus data.");
     }
-    console.groupEnd();
   };
 
-  // --- DELETE 2: Jenis Kelompok Data (Parent/Accordion) ---
   const handleDeleteJenisData = async (jenisId: number) => {
-    console.group("🚀 DEBUG: Delete Jenis Kelompok Data");
-    console.log("ID Jenis Data:", jenisId);
-
-    if (
-      !confirm(
-        "⚠️ PERINGATAN: Yakin ingin menghapus JENIS KELOMPOK DATA ini?\n\nSemua data kinerja di dalamnya mungkin juga akan terhapus.",
-      )
-    ) {
-        console.groupEnd();
-        return;
-    }
-
-    const base = branding?.api_url;
-    if (!base) {
-      alert("Base URL api_url belum diset.");
-      console.groupEnd();
-      return;
-    }
+    if (!confirm("Yakin ingin menghapus JENIS KELOMPOK DATA ini?")) return;
+    const base = branding?.api_perencanaan;
+    if (!base) return;
 
     try {
-      const headers: HeadersInit = { accept: "application/json" };
-
-      // SESUAI REQUEST: TANPA /alur-kerja
-      const url = `${base}/api/v1/jenisdataopd/${jenisId}`;
-      console.log("🔗 DELETE JENIS DATA URL:", url);
-
-      const res = await fetch(url, { method: "DELETE", headers });
-
-      if (!res.ok) {
-        const raw = await res.text();
-        console.error("❌ Delete Jenis Data failed:", res.status, raw);
-        
-        let errorMsg = `HTTP ${res.status}`;
-        try {
-            const json = JSON.parse(raw);
-            if(json.message) errorMsg = json.message;
-        } catch {}
-
-        alert(`❌ Gagal menghapus Jenis Data: ${errorMsg}`);
-        console.groupEnd();
-        return;
-      }
-
+      const res = await fetch(`${base}/api/v1/jenisdataopd/${jenisId}`, {
+        method: "DELETE",
+        headers: { accept: "application/json" },
+      });
+      if (!res.ok) throw new Error("Gagal menghapus jenis data");
       alert("✅ Jenis Kelompok Data berhasil dihapus!");
       setOpenId(null); 
       await onReloadAction();
     } catch (error) {
-      console.error("❌ Catch Error:", error);
       alert("❌ Terjadi kesalahan sistem saat menghapus jenis data.");
     }
-    console.groupEnd();
   };
 
   if (!checked) return null;
@@ -265,72 +256,43 @@ export default function JenisDataTable({
           const isOpen = openId === item.id;
           const rows = dataKinerjaMap[item.id] ?? [];
 
-          const visibleRows =
-            years.length === 0
-              ? rows
-              : rows.filter((row) => {
-                  if (!row.target || row.target.length === 0) return false;
-                  return row.target.some((t) => {
-                    const yearStr = String(t.tahun);
-                    const inRange = years.includes(yearStr);
-                    const val = t.target;
-                    const hasValue =
-                      val !== null &&
-                      val !== undefined &&
-                      !(typeof val === "string" && val.trim() === "");
-                    return inRange && hasValue;
-                  });
-                });
+          const visibleRows = years.length === 0 ? rows : rows.filter((row) => {
+              if (!row.target || row.target.length === 0) return false;
+              return row.target.some((t) => {
+                const yearStr = String(t.tahun);
+                const inRange = years.includes(yearStr);
+                const val = t.target;
+                const hasValue = val !== null && val !== undefined && !(typeof val === "string" && val.trim() === "");
+                return inRange && hasValue;
+              });
+            });
 
           return (
             <div key={item.id} className="border rounded-xl overflow-hidden">
-              {/* Header Accordion */}
               <button
                 onClick={() => toggleOpen(item.id)}
-                className={`w-full flex items-center justify-between px-4 py-3 text-left transition
-                  ${
-                    isOpen
-                      ? "bg-emerald-500 text-white"
-                      : "bg-white hover:bg-emerald-50"
-                  }`}
+                className={`w-full flex items-center justify-between px-4 py-3 text-left transition ${isOpen ? "bg-emerald-500 text-white" : "bg-white hover:bg-emerald-50"}`}
               >
                 <div className="flex items-center gap-3">
-                  <span className="text-sm font-semibold w-6 text-center">
-                    {idx + 1}
-                  </span>
-                  <span className="font-semibold">
-                    Jenis Data — {item.jenis_data}
-                  </span>
+                  <span className="text-sm font-semibold w-6 text-center">{idx + 1}</span>
+                  <span className="font-semibold">Jenis Data — {item.jenis_data}</span>
                 </div>
-                <ChevronDown
-                  className={`transition-transform ${
-                    isOpen ? "rotate-180" : ""
-                  }`}
-                  size={18}
-                />
+                <ChevronDown className={`transition-transform ${isOpen ? "rotate-180" : ""}`} size={18} />
               </button>
 
-              {/* Konten Detail */}
               {isOpen && (
                 <div className="p-4 border-t bg-white">
                   <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-4 gap-4">
-                    <p className="text-sm text-gray-700">
-                      Data Kinerja OPD untuk jenis:{" "}
-                      <span className="font-semibold">{item.jenis_data}</span>
-                    </p>
+                    <p className="text-sm text-gray-700">Data Kinerja OPD untuk jenis: <span className="font-semibold">{item.jenis_data}</span></p>
                     <div className="flex flex-wrap gap-2">
                       <button
-                        onClick={handleSavePDF}
+                        onClick={() => handleSavePDF(item.id, item.jenis_data)}
                         className="flex items-center gap-2 px-4 py-2 bg-red-500 hover:bg-red-600 text-white rounded text-sm transition"
                       >
                         💾 Simpan PDF
                       </button>
-
                       <button
-                        onClick={() => {
-                          setSelectedJenisId(String(item.id));
-                          setOpenAddModal(true);
-                        }}
+                        onClick={() => { setSelectedJenisId(String(item.id)); setOpenAddModal(true); }}
                         className="px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded text-sm transition"
                       >
                         + Tambah Data Kinerja
@@ -339,140 +301,51 @@ export default function JenisDataTable({
                   </div>
 
                   {visibleRows.length === 0 ? (
-                    <p className="text-sm text-gray-500 text-center py-4 border border-dashed rounded-lg">
-                      Tidak ada data kinerja untuk tahun/periode yang dipilih.
-                    </p>
+                    <p className="text-sm text-gray-500 text-center py-4 border border-dashed rounded-lg">Tidak ada data kinerja.</p>
                   ) : (
                     <div className="overflow-x-auto">
-                      <table
-                        id="table-jenis-data"
-                        className="w-full text-sm text-left border-collapse"
-                      >
+                      <table id={`table-jenis-${item.id}`} className="w-full text-sm text-left border-collapse">
                         <thead className="bg-[#10B981] text-white uppercase">
                           <tr>
-                            <th rowSpan={2} className="p-2 border text-center">
-                              No
-                            </th>
-                            <th rowSpan={2} className="p-2 border text-center">
-                              Nama Data
-                            </th>
-                            <th rowSpan={2} className="p-2 border text-center">
-                              Definisi Operasional
-                            </th>
-                            <th rowSpan={2} className="p-2 border text-center">
-                              Sumber Data
-                            </th>
-                            <th rowSpan={2} className="p-2 border text-center">
-                              Instansi Produsen Data
-                            </th>
-                            <th
-                              colSpan={years.length}
-                              className="p-2 border text-center"
-                            >
-                              Jumlah
-                            </th>
-                            <th rowSpan={2} className="p-2 border text-center">
-                              Satuan
-                            </th>
-                            <th rowSpan={2} className="p-2 border text-center">
-                              Keterangan
-                            </th>
-                            <th rowSpan={2} className="p-2 border text-center">
-                              Aksi
-                            </th>
+                            <th rowSpan={2} className="p-2 border text-center">No</th>
+                            <th rowSpan={2} className="p-2 border text-center">Nama Data</th>
+                            <th rowSpan={2} className="p-2 border text-center">Definisi Operasional</th>
+                            <th rowSpan={2} className="p-2 border text-center">Sumber Data</th>
+                            <th rowSpan={2} className="p-2 border text-center">Instansi Produsen</th>
+                            <th colSpan={years.length} className="p-2 border text-center">Jumlah</th>
+                            <th rowSpan={2} className="p-2 border text-center">Satuan</th>
+                            <th rowSpan={2} className="p-2 border text-center">Keterangan</th>
+                            <th rowSpan={2} className="p-2 border text-center">Aksi</th>
                           </tr>
                           <tr>
-                            {years.map((y) => (
-                              <th key={y} className="p-2 border text-center">
-                                {y}
-                              </th>
-                            ))}
+                            {years.map((y) => <th key={y} className="p-2 border text-center">{y}</th>)}
                           </tr>
                         </thead>
-
                         <tbody>
                           {visibleRows.map((row, index) => {
                             const tahunMap: Record<string, string> = {};
-                            row.target?.forEach((t) => {
-                              if (t?.tahun)
-                                tahunMap[String(t.tahun)] = String(t.target);
-                            });
-
-                            const firstDisplayedYear = years[0];
-                            const satuanByYear =
-                              row.target?.find(
-                                (t) => String(t.tahun) === firstDisplayedYear,
-                              )?.satuan ??
-                              row.target?.[0]?.satuan ??
-                              "-";
+                            row.target?.forEach((t) => { if (t?.tahun) tahunMap[String(t.tahun)] = String(t.target); });
+                            const satuanByYear = row.target?.[0]?.satuan ?? "-";
 
                             return (
-                              <tr
-                                key={row.id}
-                                className="bg-white hover:bg-gray-50"
-                              >
-                                <td className="p-2 border text-center">
-                                  {index + 1}
-                                </td>
+                              <tr key={row.id} className="bg-white hover:bg-gray-50">
+                                <td className="p-2 border text-center">{index + 1}</td>
                                 <td className="p-2 border">{row.nama_data}</td>
-                                <td className="p-2 border">
-                                  {row.rumus_perhitungan}
-                                </td>
-                                <td className="p-2 border">
-                                  {row.sumber_data}
-                                </td>
-                                <td className="p-2 border">
-                                  {row.instansi_produsen_data}
-                                </td>
-
-                                {years.map((y) => (
-                                  <td
-                                    key={y}
-                                    className="p-2 border text-center"
-                                  >
-                                    {tahunMap[y] ?? "-"}
-                                  </td>
-                                ))}
-
+                                <td className="p-2 border">{row.rumus_perhitungan}</td>
+                                <td className="p-2 border">{row.sumber_data}</td>
+                                <td className="p-2 border">{row.instansi_produsen_data}</td>
+                                {years.map((y) => <td key={y} className="p-2 border text-center">{tahunMap[y] ?? "-"}</td>)}
+                                <td className="p-2 border text-center">{satuanByYear}</td>
                                 <td className="p-2 border text-center">
-                                  {satuanByYear}
-                                </td>
-                                <td className="p-2 border text-center">
-                                  <button
-                                    onClick={() => {
-                                      setKetContent(row.keterangan || "");
-                                      setOpenKetModal(true);
-                                    }}
-                                    className="px-3 py-1 text-white rounded bg-purple-500 hover:bg-purple-600 text-xs"
-                                  >
-                                    Lihat
-                                  </button>
+                                  <button onClick={() => { setKetContent(row.keterangan || ""); setOpenKetModal(true); }} className="px-3 py-1 text-white rounded bg-purple-500 hover:bg-purple-600 text-xs">Lihat</button>
                                 </td>
                                 <td className="p-2 border text-center">
                                   <div className="flex flex-col items-center gap-2">
-                                    <button
-                                      onClick={() => {
-                                        const prepared: DataKinerjaItem = {
-                                          ...row,
-                                          jenis_data_id:
-                                            row.jenis_data_id ?? item.id,
-                                        };
-                                        setSelectedEditItem(prepared);
-                                        setSelectedJenisIdForEdit(item.id);
-                                        setOpenEditModal(true);
-                                      }}
-                                      className="px-3 py-1 text-white rounded bg-green-500 hover:bg-green-600 w-full max-w-[80px] text-xs"
-                                    >
-                                      Edit
-                                    </button>
-                                    <button
-                                      onClick={() =>
-                                        handleDeleteKinerja(row.id, item.id)
-                                      }
-                                      className="px-3 py-1 text-white rounded bg-red-500 hover:bg-red-600 w-full max-w-[80px] text-xs"
-                                    >
-                                      Hapus
-                                    </button>
+                                    <button onClick={() => { 
+                                        const prepared = { ...row, jenis_data_id: row.jenis_data_id ?? item.id };
+                                        setSelectedEditItem(prepared); setSelectedJenisIdForEdit(item.id); setOpenEditModal(true); 
+                                    }} className="px-3 py-1 text-white rounded bg-green-500 hover:bg-green-600 w-full max-w-[80px] text-xs">Edit</button>
+                                    <button onClick={() => handleDeleteKinerja(row.id, item.id)} className="px-3 py-1 text-white rounded bg-red-500 hover:bg-red-600 w-full max-w-[80px] text-xs">Hapus</button>
                                   </div>
                                 </td>
                               </tr>
@@ -483,14 +356,9 @@ export default function JenisDataTable({
                     </div>
                   )}
 
-                  {/* ===== BUTTON HAPUS JENIS KELOMPOK DATA (DI BAWAH TABEL) ===== */}
                   <div className="mt-6 pt-4 border-t flex justify-end">
-                    <button
-                      onClick={() => handleDeleteJenisData(item.id)}
-                      className="flex items-center gap-2 px-4 py-2 bg-red-100 text-red-600 hover:bg-red-200 border border-red-300 rounded-lg transition-colors text-sm font-medium"
-                    >
-                      <Trash2 size={16} />
-                      Hapus Jenis Kelompok Data
+                    <button onClick={() => handleDeleteJenisData(item.id)} className="flex items-center gap-2 px-4 py-2 bg-red-100 text-red-600 hover:bg-red-200 border border-red-300 rounded-lg text-sm font-medium">
+                      <Trash2 size={16} /> Hapus Jenis Kelompok Data
                     </button>
                   </div>
                 </div>
@@ -499,76 +367,16 @@ export default function JenisDataTable({
           );
         })
       ) : (
-        <div className="border rounded-xl p-8 text-center text-gray-500 bg-white">
-          <p className="text-lg">Belum ada data.</p>
-          <p className="text-sm mt-1">Silakan tambah Jenis Kelompok Data baru.</p>
-        </div>
+        <div className="border rounded-xl p-8 text-center text-gray-500 bg-white"><p className="text-lg">Belum ada data.</p></div>
       )}
 
-      {/* Modal TAMBAH DATA KINERJA */}
-      {openAddModal && selectedJenisId && (
-        <AddDataTableModal
-          isOpen={openAddModal}
-          onClose={() => setOpenAddModal(false)}
-          onSuccess={async () => {
-            await onReloadAction();
-            setOpenAddModal(false);
-          }}
-          jenisDataId={selectedJenisId}
-          kodeOpd={kodeOpd}
-        />
-      )}
-
-      {/* Modal EDIT DATA KINERJA */}
-      {openEditModal && selectedEditItem && (
-        <EditDataTableModal
-          isOpen={openEditModal}
-          onClose={() => setOpenEditModal(false)}
-          onSuccess={async () => {
-            await onReloadAction();
-          }}
-          dataItem={selectedEditItem as any}
-          jenisDataId={
-            selectedJenisIdForEdit != null
-              ? String(selectedJenisIdForEdit)
-              : undefined
-          }
-        />
-      )}
-
-      {/* Modal KETERANGAN / NARASI */}
+      {openAddModal && selectedJenisId && <AddDataTableModal isOpen={openAddModal} onClose={() => setOpenAddModal(false)} onSuccess={async () => { await onReloadAction(); setOpenAddModal(false); }} jenisDataId={selectedJenisId} kodeOpd={kodeOpd} />}
+      {openEditModal && selectedEditItem && <EditDataTableModal isOpen={openEditModal} onClose={() => setOpenEditModal(false)} onSuccess={async () => { await onReloadAction(); }} dataItem={selectedEditItem as any} jenisDataId={selectedJenisIdForEdit != null ? String(selectedJenisIdForEdit) : undefined} />}
       {openKetModal && (
-        <div
-          className="fixed inset-0 flex justify-center items-center z-50 p-4"
-          style={{ backgroundColor: "rgba(0, 0, 0, 0.5)" }}
-          onClick={() => setOpenKetModal(false)}
-        >
-          <div
-            className="relative z-10 bg-white rounded-lg shadow-xl w-full max-w-lg"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex justify-between items-center p-5 border-b">
-              <h3 className="text-xl font-bold text-gray-800">
-                KETERANGAN / NARASI
-              </h3>
-              <button
-                onClick={() => setOpenKetModal(false)}
-                className="text-gray-500 hover:text-gray-800 text-2xl"
-              >
-                &times;
-              </button>
-            </div>
-            <div className="p-6">
-              {ketContent ? (
-                <p className="text-gray-700 whitespace-pre-line">
-                  {ketContent}
-                </p>
-              ) : (
-                <p className="text-gray-400 italic">
-                  Belum ada keterangan/narasi
-                </p>
-              )}
-            </div>
+        <div className="fixed inset-0 flex justify-center items-center z-50 p-4" style={{ backgroundColor: "rgba(0, 0, 0, 0.5)" }} onClick={() => setOpenKetModal(false)}>
+          <div className="relative z-10 bg-white rounded-lg shadow-xl w-full max-w-lg" onClick={(e) => e.stopPropagation()}>
+            <div className="flex justify-between items-center p-5 border-b"><h3 className="text-xl font-bold text-gray-800">KETERANGAN</h3><button onClick={() => setOpenKetModal(false)} className="text-gray-500 hover:text-gray-800 text-2xl">&times;</button></div>
+            <div className="p-6">{ketContent ? <p className="text-gray-700 whitespace-pre-line">{ketContent}</p> : <p className="text-gray-400 italic">Belum ada keterangan</p>}</div>
           </div>
         </div>
       )}

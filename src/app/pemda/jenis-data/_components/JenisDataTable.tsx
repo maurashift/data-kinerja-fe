@@ -5,7 +5,7 @@ import { usePathname } from "next/navigation";
 import { ChevronDown, Trash2 } from "lucide-react";
 import AddDataTableModal from "./AddDataTableModal";
 import EditDataTableModal from "./EditDataTableModal";
-import { getCookie } from "@/src/lib/cookie"; // Pastikan path sesuai
+import { getCookie } from "@/src/lib/cookie"; 
 import { useBrandingContext } from "@/src/providers/BrandingProvider";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
@@ -34,37 +34,10 @@ type JenisDataTableProps = {
   jenisDataList: JenisData[];
   dataKinerjaMap: Record<number, DataKinerjaItem[]>;
   onReloadAction: () => void;
-  //kodeOpd: string | null;
+  kodeOpd: string | null; // Opsional untuk Pemda, tapi tetap diterima agar konsisten
 };
 
 // ===== Helpers =====
-const handleSavePDF = () => {
-  const doc = new jsPDF("l", "mm", "a4");
-
-  doc.setFontSize(14);
-  doc.text("Data Kinerja Pemda – Jenis Kelompok Data", 14, 15);
-
-  autoTable(doc, {
-    html: "#table-jenis-data",
-    startY: 20,
-    theme: "grid",
-    headStyles: {
-      fillColor: [16, 185, 129],
-      textColor: 255,
-      halign: "center",
-    },
-    bodyStyles: {
-      halign: "center",
-    },
-    styles: {
-      fontSize: 9,
-      cellPadding: 3,
-    },
-  });
-
-  doc.save("data-kinerja-pemda.pdf");
-};
-
 const safeParseOption = (
   v: string | null | undefined,
 ): { value: string; label: string } | null => {
@@ -89,24 +62,17 @@ export default function JenisDataTable({
   jenisDataList,
   dataKinerjaMap,
   onReloadAction,
-  //kodeOpd,
+  kodeOpd,
 }: JenisDataTableProps) {
   const pathname = usePathname();
   const [openId, setOpenId] = useState<number | null>(null);
 
-  // modal TAMBAH
+  // modal states
   const [openAddModal, setOpenAddModal] = useState(false);
   const [selectedJenisId, setSelectedJenisId] = useState<string | null>(null);
-
-  // modal EDIT
   const [openEditModal, setOpenEditModal] = useState(false);
-  const [selectedEditItem, setSelectedEditItem] =
-    useState<DataKinerjaItem | null>(null);
-  const [selectedJenisIdForEdit, setSelectedJenisIdForEdit] = useState<
-    number | null
-  >(null);
-
-  // modal KETERANGAN/NARASI
+  const [selectedEditItem, setSelectedEditItem] = useState<DataKinerjaItem | null>(null);
+  const [selectedJenisIdForEdit, setSelectedJenisIdForEdit] = useState<number | null>(null);
   const [openKetModal, setOpenKetModal] = useState(false);
   const [ketContent, setKetContent] = useState<string>("");
 
@@ -150,6 +116,90 @@ export default function JenisDataTable({
     return [];
   }, [checked, mode, periodeLabel, selectedYear]);
 
+  // ===== PDF GENERATION (PEMDA) =====
+  const handleSavePDF = (currentJenisId: number, currentJenisName: string) => {
+    const doc = new jsPDF("l", "mm", "a4"); // Landscape
+
+    // Header Laporan
+    doc.setFontSize(14);
+    doc.text(`Data Kinerja Pemda - ${currentJenisName}`, 14, 15);
+    doc.setFontSize(10);
+    doc.text(`Periode/Tahun: ${mode === "tahun" ? selectedYear : periodeLabel}`, 14, 22);
+
+    // 1. Definisikan Kolom
+    const tableHeaders = [
+      "No",
+      "Nama Data",
+      "Definisi Operasional",
+      "Sumber Data",
+      "Instansi Produsen",
+      ...years, // Kolom tahun dinamis
+      "Satuan",
+      "Keterangan", 
+    ];
+
+    // 2. Persiapkan Data Rows
+    const rowsData = dataKinerjaMap[currentJenisId] ?? [];
+    
+    // Filter rows sesuai tahun yang aktif
+    const visibleRows = years.length === 0 ? rowsData : rowsData.filter((row) => {
+        if (!row.target || row.target.length === 0) return false;
+        return row.target.some((t) => {
+            const yearStr = String(t.tahun);
+            return years.includes(yearStr) && t.target !== null && t.target !== undefined && String(t.target).trim() !== "";
+        });
+    });
+
+    const tableBody = visibleRows.map((row, index) => {
+      const tahunMap: Record<string, string> = {};
+      row.target?.forEach((t) => {
+        if (t?.tahun) tahunMap[String(t.tahun)] = String(t.target);
+      });
+
+      const satuan = row.target?.[0]?.satuan ?? "-";
+
+      return [
+        index + 1,
+        row.nama_data,
+        row.rumus_perhitungan,
+        row.sumber_data,
+        row.instansi_produsen_data,
+        ...years.map((y) => tahunMap[y] ?? "-"),
+        satuan,
+        row.keterangan || "-" // Isi keterangan full
+      ];
+    });
+
+    // 3. Generate Tabel dengan Styling
+    autoTable(doc, {
+      head: [tableHeaders],
+      body: tableBody,
+      startY: 28,
+      theme: "grid",
+      styles: {
+        fontSize: 8,
+        cellPadding: 2,
+        valign: "middle",
+        halign: "center",
+        lineWidth: 0.1, 
+        lineColor: [200, 200, 200], 
+      },
+      headStyles: {
+        fillColor: [16, 185, 129], // Hijau
+        textColor: 255, 
+        lineWidth: 0.1, 
+        lineColor: [255, 255, 255], 
+      },
+      columnStyles: {
+        1: { halign: "left" }, 
+        2: { halign: "left" }, 
+        [tableHeaders.length - 1]: { halign: "left", cellWidth: 35 },
+      },
+    });
+
+    doc.save(`data-kinerja-pemda-${currentJenisName}.pdf`);
+  };
+
   const toggleOpen = (id: number) => {
     if (openId === id) {
       setOpenId(null);
@@ -158,30 +208,28 @@ export default function JenisDataTable({
     setOpenId(id);
   };
 
-  // --- DELETE 1: Data Kinerja (Baris Tabel) ---
+  // --- DELETE KINERJA (PEMDA) ---
   const handleDeleteKinerja = async (rowId: number, _jenisId: number) => {
     if (!confirm("Yakin ingin menghapus data ini?")) return;
 
     const base = branding?.api_perencanaan;
     if (!base) {
-      alert("Base URL api_perencanaan belum diset di BrandingContext.");
+      alert("Base URL api_perencanaan belum diset.");
       return;
     }
 
     try {
-      const headers: HeadersInit = {
-        accept: "application/json",
-      };
-
-      // URL API: Tanpa /alur-kerja
+      // Endpoint PEMDA: /datakinerjapemda/{id}
       const url = `${base}/api/v1/datakinerjapemda/${rowId}`;
-      console.log("DELETE ROW URL:", url);
+      console.log("DELETE PEMDA ROW:", url);
 
-      const res = await fetch(url, { method: "DELETE", headers });
+      const res = await fetch(url, {
+        method: "DELETE",
+        headers: { accept: "application/json" },
+      });
 
       if (!res.ok) {
-        const raw = await res.text();
-        console.error("Delete failed:", res.status, raw);
+        console.error("Delete failed:", res.status);
         alert(`❌ Gagal menghapus data (HTTP ${res.status})`);
         return;
       }
@@ -194,52 +242,43 @@ export default function JenisDataTable({
     }
   };
 
-  // --- DELETE 2: Jenis Kelompok Data (Parent/Accordion) ---
+  // --- DELETE JENIS DATA (PEMDA) ---
   const handleDeleteJenisData = async (jenisId: number) => {
-    if (
-      !confirm(
-        "⚠️ PERINGATAN: Yakin ingin menghapus JENIS KELOMPOK DATA ini?\n\nSemua data kinerja di dalamnya mungkin juga akan terhapus.",
-      )
-    )
-      return;
+    if (!confirm("⚠️ PERINGATAN: Yakin ingin menghapus JENIS KELOMPOK DATA PEMDA ini?\nSemua data di dalamnya akan hilang.")) return;
 
     const base = branding?.api_perencanaan;
     if (!base) {
-      alert("Base URL api_perencanaan belum diset.");
+      alert("Base URL belum diset.");
       return;
     }
 
     try {
-      const headers: HeadersInit = {
-        accept: "application/json",
-      };
+      // Endpoint PEMDA: /jenisdatapemda/{id}
+      const url = `${base}/api/v1/jenisdatapemda/${jenisId}`;
+      console.log("DELETE PEMDA JENIS DATA:", url);
 
-      // URL API: Tanpa /alur-kerja
-      const url = `${base}/api/v1/jenisdata/${jenisId}`;
-      console.log("DELETE JENIS DATA URL:", url);
-
-      const res = await fetch(url, { method: "DELETE", headers });
+      const res = await fetch(url, {
+        method: "DELETE",
+        headers: { accept: "application/json" },
+      });
 
       if (!res.ok) {
-        const raw = await res.text();
-        console.error("Delete Jenis Data failed:", res.status, raw);
-        
-        let errorMsg = `HTTP ${res.status}`;
+        console.error("Delete Jenis Data failed:", res.status);
+        let msg = `HTTP ${res.status}`;
         try {
-            const json = JSON.parse(raw);
-            if(json.message) errorMsg = json.message;
+            const j = await res.json();
+            if(j.message) msg = j.message;
         } catch {}
-
-        alert(`❌ Gagal menghapus Jenis Data: ${errorMsg}`);
+        alert(`❌ Gagal menghapus Jenis Data: ${msg}`);
         return;
       }
 
-      alert("✅ Jenis Kelompok Data berhasil dihapus!");
-      setOpenId(null); 
+      alert("✅ Jenis Kelompok Data Pemda berhasil dihapus!");
+      setOpenId(null);
       await onReloadAction();
     } catch (error) {
       console.error("Gagal menghapus jenis data:", error);
-      alert("❌ Terjadi kesalahan sistem saat menghapus jenis data.");
+      alert("❌ Terjadi kesalahan sistem.");
     }
   };
 
@@ -307,7 +346,7 @@ export default function JenisDataTable({
                     </p>
                     <div className="flex flex-wrap gap-2">
                       <button
-                        onClick={handleSavePDF}
+                        onClick={() => handleSavePDF(item.id, item.jenis_data)}
                         className="flex items-center gap-2 px-4 py-2 bg-red-500 hover:bg-red-600 text-white rounded text-sm transition"
                       >
                         💾 Simpan PDF
@@ -337,42 +376,19 @@ export default function JenisDataTable({
                       >
                         <thead className="bg-[#10B981] text-white uppercase">
                           <tr>
-                            <th rowSpan={2} className="p-2 border text-center">
-                              No
-                            </th>
-                            <th rowSpan={2} className="p-2 border text-center">
-                              Nama Data
-                            </th>
-                            <th rowSpan={2} className="p-2 border text-center">
-                              Definisi Operasional
-                            </th>
-                            <th rowSpan={2} className="p-2 border text-center">
-                              Sumber Data
-                            </th>
-                            <th rowSpan={2} className="p-2 border text-center">
-                              Instansi Produsen Data
-                            </th>
-                            <th
-                              colSpan={years.length}
-                              className="p-2 border text-center"
-                            >
-                              Jumlah
-                            </th>
-                            <th rowSpan={2} className="p-2 border text-center">
-                              Satuan
-                            </th>
-                            <th rowSpan={2} className="p-2 border text-center">
-                              Keterangan
-                            </th>
-                            <th rowSpan={2} className="p-2 border text-center">
-                              Aksi
-                            </th>
+                            <th rowSpan={2} className="p-2 border text-center">No</th>
+                            <th rowSpan={2} className="p-2 border text-center">Nama Data</th>
+                            <th rowSpan={2} className="p-2 border text-center">Definisi Operasional</th>
+                            <th rowSpan={2} className="p-2 border text-center">Sumber Data</th>
+                            <th rowSpan={2} className="p-2 border text-center">Instansi Produsen Data</th>
+                            <th colSpan={years.length} className="p-2 border text-center">Jumlah</th>
+                            <th rowSpan={2} className="p-2 border text-center">Satuan</th>
+                            <th rowSpan={2} className="p-2 border text-center">Keterangan</th>
+                            <th rowSpan={2} className="p-2 border text-center">Aksi</th>
                           </tr>
                           <tr>
                             {years.map((y) => (
-                              <th key={y} className="p-2 border text-center">
-                                {y}
-                              </th>
+                              <th key={y} className="p-2 border text-center">{y}</th>
                             ))}
                           </tr>
                         </thead>
@@ -394,36 +410,20 @@ export default function JenisDataTable({
                               "-";
 
                             return (
-                              <tr
-                                key={row.id}
-                                className="bg-white hover:bg-gray-50"
-                              >
-                                <td className="p-2 border text-center">
-                                  {index + 1}
-                                </td>
+                              <tr key={row.id} className="bg-white hover:bg-gray-50">
+                                <td className="p-2 border text-center">{index + 1}</td>
                                 <td className="p-2 border">{row.nama_data}</td>
-                                <td className="p-2 border">
-                                  {row.rumus_perhitungan}
-                                </td>
-                                <td className="p-2 border">
-                                  {row.sumber_data}
-                                </td>
-                                <td className="p-2 border">
-                                  {row.instansi_produsen_data}
-                                </td>
+                                <td className="p-2 border">{row.rumus_perhitungan}</td>
+                                <td className="p-2 border">{row.sumber_data}</td>
+                                <td className="p-2 border">{row.instansi_produsen_data}</td>
 
                                 {years.map((y) => (
-                                  <td
-                                    key={y}
-                                    className="p-2 border text-center"
-                                  >
+                                  <td key={y} className="p-2 border text-center">
                                     {tahunMap[y] ?? "-"}
                                   </td>
                                 ))}
 
-                                <td className="p-2 border text-center">
-                                  {satuanByYear}
-                                </td>
+                                <td className="p-2 border text-center">{satuanByYear}</td>
                                 <td className="p-2 border text-center">
                                   <button
                                     onClick={() => {
@@ -441,8 +441,7 @@ export default function JenisDataTable({
                                       onClick={() => {
                                         const prepared: DataKinerjaItem = {
                                           ...row,
-                                          jenis_data_id:
-                                            row.jenis_data_id ?? item.id,
+                                          jenis_data_id: row.jenis_data_id ?? item.id,
                                         };
                                         setSelectedEditItem(prepared);
                                         setSelectedJenisIdForEdit(item.id);
@@ -453,9 +452,7 @@ export default function JenisDataTable({
                                       Edit
                                     </button>
                                     <button
-                                      onClick={() =>
-                                        handleDeleteKinerja(row.id, item.id)
-                                      }
+                                      onClick={() => handleDeleteKinerja(row.id, item.id)}
                                       className="px-3 py-1 text-white rounded bg-red-500 hover:bg-red-600 w-full max-w-[80px] text-xs"
                                     >
                                       Hapus
@@ -470,7 +467,7 @@ export default function JenisDataTable({
                     </div>
                   )}
 
-                  {/* ===== BUTTON HAPUS JENIS KELOMPOK DATA (DI BAWAH TABEL) ===== */}
+                  {/* BUTTON HAPUS JENIS KELOMPOK DATA (PEMDA) */}
                   <div className="mt-6 pt-4 border-t flex justify-end">
                     <button
                       onClick={() => handleDeleteJenisData(item.id)}
@@ -502,7 +499,7 @@ export default function JenisDataTable({
             setOpenAddModal(false);
           }}
           jenisDataId={selectedJenisId}
-          //kodeOpd={kodeOpd}
+          // kodeOpd opsional di Pemda
         />
       )}
 

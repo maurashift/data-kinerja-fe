@@ -6,18 +6,15 @@ import {
   Controller,
   SubmitHandler,
   useFieldArray,
-  FieldValues,
-  Control,
 } from "react-hook-form";
 import { useBrandingContext } from "@/src/providers/BrandingProvider";
-// import { getCookie } from "@/lib/cookie"; // Tidak diperlukan untuk edit tanpa token
 
+// ===== Types =====
 interface ModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSuccess: () => void | Promise<void>;
   dataItem: DataKinerja | null;
-  // authToken dihapus
   jenisDataId?: string | null;
 }
 
@@ -81,6 +78,7 @@ const EditDataTableModal = ({
     name: "targets",
   });
 
+  // Reset form saat modal dibuka
   useEffect(() => {
     if (isOpen && dataItem) {
       reset({
@@ -111,7 +109,9 @@ const EditDataTableModal = ({
     
     setIsSubmitting(true);
 
+    // PERBAIKAN: Menambahkan 'id' ke dalam payload
     const payload = {
+      id: dataItem.id, // <--- INI YG DITAMBAHKAN AGAR VALIDASI BACKEND LOLOS
       jenis_data_id: dataItem.jenis_data_id,
       nama_data: data.nama_data,
       rumus_perhitungan: data.rumus_perhitungan,
@@ -126,18 +126,16 @@ const EditDataTableModal = ({
     };
 
     try {
-      // URL: Tanpa /alur-kerja
-      const res = await fetch(
-        `${branding.api_perencanaan}/api/v1/datakinerjaopd/${dataItem.id}`,
-        {
-          method: "PUT",
-          headers: {
-            "Content-Type": "application/json",
-            // Auth token dihapus
-          },
-          body: JSON.stringify(payload),
-        }
-      );
+      // URL: Endpoint PEMDA (/datakinerjapemda/{id})
+      const url = `${branding.api_perencanaan}/api/v1/datakinerjapemda/${dataItem.id}`;
+      
+      const res = await fetch(url, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+      });
 
       if (!res.ok) {
         const errText = await res.text();
@@ -145,6 +143,10 @@ const EditDataTableModal = ({
         try {
             const errJson = JSON.parse(errText);
             if (errJson.message) errorMsg = errJson.message;
+            // Jika ada validasi error detail
+            if (errJson.data && typeof errJson.data === 'object') {
+                errorMsg += " (" + JSON.stringify(errJson.data) + ")";
+            }
         } catch {}
         
         throw new Error(errorMsg);
@@ -172,7 +174,7 @@ const EditDataTableModal = ({
     <div className="fixed inset-0 flex justify-center items-center z-50 p-4" style={{ backgroundColor: "rgba(0, 0, 0, 0.5)" }}>
       <div className="bg-white rounded-lg shadow-xl w-full max-w-4xl max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
         <div className="p-5 border-b">
-          <h3 className="text-xl font-bold text-center text-gray-800">EDIT DATA KINERJA</h3>
+          <h3 className="text-xl font-bold text-center text-gray-800">EDIT DATA KINERJA (PEMDA)</h3>
         </div>
 
         <form onSubmit={handleSubmit(onSubmit)} className="p-8 space-y-4">
@@ -181,6 +183,7 @@ const EditDataTableModal = ({
           <InputField control={control} name="sumber_data" label="Sumber Data" error={errors.sumber_data?.message} />
           <InputField control={control} name="instansi_produsen_data" label="Instansi Produsen Data" error={errors.instansi_produsen_data?.message} />
 
+          {/* Tabel Target Tahunan */}
           <div>
             <label className="block text-sm font-bold mb-2 text-gray-700">Jumlah per Tahun</label>
             <div className="border rounded overflow-x-auto">
@@ -241,6 +244,7 @@ const EditDataTableModal = ({
   );
 };
 
+// Helper Component untuk Input
 const InputField = ({ control, name, label, error, isTextarea = false }: any) => (
   <div>
     <label className="block text-sm font-bold mb-2 text-gray-700">{label}</label>

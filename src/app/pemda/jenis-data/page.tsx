@@ -5,10 +5,9 @@ import Link from "next/link";
 import { Plus } from "lucide-react";
 import { FiHome } from "react-icons/fi";
 import { useBrandingContext } from "@/src/providers/BrandingProvider";
-import { LoadingClip } from "@/src/components/global/Loading/loading";
-// Pastikan Anda menggunakan komponen tabel yang benar (bisa jadi perlu duplikasi jika logika di dalamnya hardcoded ke OPD)
-import JenisDataTable from "./_components/JenisDataTable"; 
-import AddDataModal from "./_components/AddDataModal";
+import { LoadingClip } from "@/src/components/global/Loading/loading"; 
+import JenisDataTable from "../../pemda/jenis-data/_components/JenisDataTable"; 
+import AddDataModal from "./_components/AddDataModal"; 
 
 // --- Types ---
 type JenisData = {
@@ -45,55 +44,58 @@ export default function PageJenisData() {
   const [error, setError] = useState<string | null>(null);
   const [isModalAddOpen, setIsModalAddOpen] = useState(false);
 
-  // 1. Fungsi Fetch Data (Jenis Data & Data Kinerja PEMDA)
+  // 1. Fungsi Fetch Data (Parallel Fetch)
   const fetchData = useCallback(async () => {
-    // Pastikan URL API tersedia
     if (!branding?.api_perencanaan) return;
 
     setIsLoading(true);
     setError(null);
 
     try {
-      // A. Fetch Jenis Data Pemda
-      // Asumsi endpoint: /api/v1/jenisdatapemda/list (tanpa kode OPD)
-      const resJenis = await fetch(
-        `${branding.api_perencanaan}/api/v1/jenisdata`, 
-        {
-            headers: { "Content-Type": "application/json" },
-            cache: "no-store" 
-        }
-      );
-      
-      // B. Fetch Data Kinerja Pemda
-      // Asumsi endpoint: /api/v1/datakinerjapemda/list
-      const resKinerja = await fetch(
-        `${branding.api_perencanaan}/api/v1/datakinerjapemda/list`, 
-        {
-            headers: { "Content-Type": "application/json" },
-            cache: "no-store"
-        }
-      );
+      // Kita jalankan dua request sekaligus agar efisien
+      const [resJenis, resKinerja] = await Promise.all([
+        // 1. Fetch Master Jenis Data (Agar yang kosong tetap muncul)
+        fetch(`${branding.api_perencanaan}/api/v1/jenisdata`, {
+          headers: { "Content-Type": "application/json" },
+          cache: "no-store",
+        }),
+        // 2. Fetch Data Kinerja (Isi tabel yang nested)
+        fetch(`${branding.api_perencanaan}/api/v1/datakinerjapemda/list`, {
+          headers: { "Content-Type": "application/json" },
+          cache: "no-store",
+        })
+      ]);
 
-      if (!resJenis.ok || !resKinerja.ok) {
-        throw new Error("Gagal mengambil data Pemda dari server.");
-      }
+      if (!resJenis.ok) throw new Error("Gagal mengambil Master Jenis Data.");
+      // Note: Jika datakinerja kosong/error mungkin kita tetap mau tampilkan jenis data, 
+      // tapi untuk strict error handling kita throw error juga.
+      if (!resKinerja.ok) throw new Error("Gagal mengambil Data Kinerja.");
 
       const jsonJenis = await resJenis.json();
       const jsonKinerja = await resKinerja.json();
 
-      // Simpan list jenis data
-      const listJenis = Array.isArray(jsonJenis.data) ? jsonJenis.data : [];
+      // --- A. SET JENIS DATA LIST (Header Accordion) ---
+      const listJenisRaw = Array.isArray(jsonJenis.data) ? jsonJenis.data : [];
+      const listJenis = listJenisRaw.map((item: any) => ({
+        id: item.id,
+        jenis_data: item.jenis_data,
+      }));
       setJenisDataList(listJenis);
 
-      // Mapping Data Kinerja berdasarkan jenis_data_id
+      // --- B. MAPPING DATA KINERJA (Isi Tabel) ---
+      // Data dari datakinerjapemda/list strukturnya nested: [{ id, jenis_data, data_kinerja: [] }]
+      // id di sini adalah ID Jenis Data.
       const rawKinerja = Array.isArray(jsonKinerja.data) ? jsonKinerja.data : [];
       const map: Record<number, DataKinerjaItem[]> = {};
 
-      rawKinerja.forEach((item: DataKinerjaItem) => {
-        const jId = item.jenis_data_id;
-        if (jId) {
-          if (!map[jId]) map[jId] = [];
-          map[jId].push(item);
+      rawKinerja.forEach((group: any) => {
+        if (group.data_kinerja && Array.isArray(group.data_kinerja)) {
+            // Mapping array data_kinerja ke ID Jenis Datanya (group.id)
+            const children = group.data_kinerja.map((child: any) => ({
+                ...child,
+                jenis_data_id: group.id // Pastikan child punya ref ke parent
+            }));
+            map[group.id] = children;
         }
       });
 
@@ -174,26 +176,16 @@ export default function PageJenisData() {
             </div>
         ) : (
             <div className="bg-white p-2 rounded-xl">
-                {/* CATATAN PENTING:
-                    Komponen JenisDataTable dan AddDataModal yang kita buat sebelumnya
-                    secara default mengarah ke endpoint OPD (...opd).
-                    
-                    Agar halaman ini bekerja sempurna, Anda perlu:
-                    1. Mengirimkan props 'type="pemda"' ke komponen tersebut, ATAU
-                    2. Membuat duplikat komponen khusus Pemda (misal: JenisDataPemdaTable.tsx)
-                       yang endpoint fetch/delete-nya mengarah ke '...pemda'
-                */}
                 <JenisDataTable 
                     jenisDataList={jenisDataList}
                     dataKinerjaMap={dataKinerjaMap}
                     onReloadAction={fetchData}
-                    //kodeOpd={null} // Pemda tidak butuh kode OPD spesifik
+                    kodeOpd={null} 
                 />
             </div>
         )}
       </div>
 
-      {/* Modal Tambah Jenis Kelompok Data */}
       <AddDataModal 
         isOpen={isModalAddOpen} 
         onClose={() => setIsModalAddOpen(false)} 
