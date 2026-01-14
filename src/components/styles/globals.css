@@ -1,0 +1,59 @@
+@import "tailwindcss";
+
+/* 1. Import Font Poppins agar mirip desain lama */
+
+
+@theme {
+  /* --- PALET WARNA LAMA (DIKEMBALIKAN) --- */
+  
+  /* Sidebar & Header: Biru Tua (#1A233A) */
+  --color-sidebar-bg: #1A233A;
+  --color-header-bg: #1A233A;
+  
+  /* Teks Sidebar: Putih */
+  --color-sidebar-text: #FFFFFF;
+  
+  /* Menu Aktif: Background Putih, Teks Biru */
+  --color-sidebar-active-bg: #FFFFFF;
+  --color-sidebar-active-text: #1A233A;
+  
+  /* Filter Bar: Biru Sedikit Terang (#2C3A57) */
+  --color-filter-bar-bg: #2C3A57; 
+  
+  /* Background Konten Utama: Abu-abu Muda (#F8F9FA) */
+  --color-content-bg: #F8F9FA;
+  
+  /* Warna Tombol & Status */
+  --color-button-blue: #0D6EFD;
+  --color-success-green: #198754;
+  --color-danger-red: #DC3545;
+
+  /* --- PENGATURAN FONT --- */
+  /* Menggunakan Poppins sebagai default sans */
+  --font-sans: "Poppins", "sans-serif";
+}
+
+/* 2. Reset CSS Dasar */
+:root {
+  /* Paksa background utama jadi abu-abu muda seperti desain lama */
+  --background: #F8F9FA; 
+  --foreground: #171717;
+}
+
+/* Hapus dark mode otomatis agar tampilan konsisten seperti desain lama */
+/* (Desain lama Anda tidak berubah warna saat mode gelap HP aktif) */
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  /* Pastikan sidebar full height tidak terpotong */
+  min-height: 100vh; 
+}
+
+/* 3. Utility Classes Tambahan (Opsional) */
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+}
